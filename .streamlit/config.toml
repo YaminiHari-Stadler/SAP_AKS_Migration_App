@@ -1,0 +1,28 @@
+# Settings for the AKS Migration App. The launcher relies on these, so change
+# them only together with "Start AKS Migration.bat" / install_and_run.ps1.
+
+[server]
+headless = true
+# Reachable from this PC only; never served to the rest of the network.
+address = "localhost"
+fileWatcherType = "none"
+# Legacy AKS workbooks and AKS V2 templates are several megabytes.
+maxUploadSize = 200
+enableStaticServing = false
+
+[browser]
+gatherUsageStats = false
+
+[client]
+toolbarMode = "minimal"
+showErrorDetails = false
+
+[runner]
+magicEnabled = false
+
+[theme]
+base = "light"
+primaryColor = "#0B4F8A"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F2F5F8"
+textColor = "#1B2733"

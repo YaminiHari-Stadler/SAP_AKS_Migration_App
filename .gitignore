@@ -1,0 +1,31 @@
+# Python environment (built by the launcher in %LOCALAPPDATA%, never committed)
+.venv/
+.venv*/
+runtime/
+.aks-env/
+__pycache__/
+*.pyc
+
+# Per-run working files
+outputs/
+logs/
+*.log
+
+# Editor / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+
+# STADLER engineering property - never published.
+# The application needs these at runtime; place them locally.
+config/*.xlsx
+config/*.xlsm
+templates/*.xlsb
+pilot/
+
+# Internal findings memo: names a real customer project.
+PILOT_FINDINGS.md
+
+# Local tooling settings
+.claude/
