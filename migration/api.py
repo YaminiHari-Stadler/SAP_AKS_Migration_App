@@ -27,10 +27,14 @@ from .model import MigrationEntry, MigrationError
 from .runlog import RunLog, friendly_error, new_run_id
 from .validation import (
     EnvironmentReport,
+    MappingInspection,
     OutputVerification,
     SourceInspection,
+    TemplateInspection,
     check_environment,
+    inspect_mapping,
     inspect_source,
+    inspect_template,
     validate_mapping,
     validate_template,
 )
@@ -175,8 +179,18 @@ def stage_source(data: bytes, filename: str, run_id: str | None = None) -> Path:
     return target
 
 
+def inspect_mapping_file(path: Path | str) -> MappingInspection:
+    """Check that a file is a usable migration mapping and count its rules."""
+    return inspect_mapping(Path(path))
+
+
+def inspect_template_file(path: Path | str) -> TemplateInspection:
+    """Check that a file is a usable AKS V2 template and describe it."""
+    return inspect_template(Path(path))
+
+
 def stage_configuration_file(data: bytes, filename: str) -> Path:
-    """Save an uploaded alternative mapping or AKS V2 template."""
+    """Save an uploaded migration mapping or AKS V2 template."""
     return stage_source(data, filename, run_id=CONFIG_STAGE_ID)
 
 
@@ -554,11 +568,15 @@ __all__ = [
     "AnalysisResult",
     "MigrationResult",
     "EnvironmentReport",
+    "MappingInspection",
+    "TemplateInspection",
     "SourceInspection",
     "OutputVerification",
     "analyse_migration",
     "run_migration",
     "inspect_source_file",
+    "inspect_mapping_file",
+    "inspect_template_file",
     "check_environment",
     "describe_configuration",
     "stage_source",

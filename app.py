@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import streamlit as st
@@ -35,16 +36,16 @@ from migration import (  # noqa: E402
     cleanup_staged_uploads,
     default_mapping,
     default_template,
-    describe_configuration,
+    inspect_mapping_file,
     inspect_source_file,
+    inspect_template_file,
     planned_output_name,
     previous_outputs,
     run_migration,
     stage_configuration_file,
     stage_source,
-    version_label,
 )
-from migration.paths import CONFIG_DIR, TEMPLATES_DIR, ensure_directories  # noqa: E402
+from migration.paths import ensure_directories  # noqa: E402
 
 APP_TITLE = "AKS Migration App"
 APP_SUBTITLE = "Convert legacy AKS lists to the AKS V2 format"
@@ -80,15 +81,11 @@ st.markdown(STYLE, unsafe_allow_html=True)
 # Session state
 # ---------------------------------------------------------------------------
 
+# `file_step` owns the per-file keys (<name>_signature / _path / _inspection
+# / _name). Only the results of the two engine calls live here.
 DEFAULTS = {
-    "source_path": None,
-    "source_name": None,
-    "source_signature": None,
-    "inspection": None,
     "analysis": None,
     "result": None,
-    "mapping_path": None,
-    "template_path": None,
 }
 for key, value in DEFAULTS.items():
     st.session_state.setdefault(key, value)
@@ -167,168 +164,232 @@ with st.sidebar:
 
 
 # ---------------------------------------------------------------------------
-# Step 1 — select the old AKS file
+# Steps 1-3 — the three files the migration needs
 # ---------------------------------------------------------------------------
 
-st.markdown('<div class="aks-step">Step 1</div>', unsafe_allow_html=True)
-st.subheader("Select the old AKS file")
 
-upload = st.file_uploader(
-    "Legacy AKS workbook (.xlsb)",
-    type=["xlsb"],
-    help="Your original file is never changed. The app works on its own copy.",
-)
+def file_step(
+    state_key: str,
+    uploader_label: str,
+    file_types: list[str],
+    help_text: str,
+    inspector,
+    stage,
+    bundled: Path | None = None,
+) -> tuple[Path | None, Any]:
+    """Render one upload step and return its (path, inspection).
 
-if upload is not None:
-    # Streamlit gives every upload its own file_id. Keying on name and size
-    # alone would silently keep the previously staged copy when a corrected
-    # workbook is re-uploaded under the same name with the same byte count.
-    signature = (upload.name, upload.size, getattr(upload, "file_id", None))
-    if st.session_state.source_signature != signature:
-        with st.spinner("Reading the workbook…"):
-            staged = stage_source(upload.getvalue(), upload.name)
-            st.session_state.source_path = staged
-            st.session_state.source_name = upload.name
-            st.session_state.source_signature = signature
-            st.session_state.inspection = inspect_source_file(staged)
+    Uploading is always available. When a copy happens to be supplied with the
+    application, it is offered as a one-click alternative - but the application
+    never requires a file to be sitting in a folder.
+    """
+    signature_key = f"{state_key}_signature"
+    path_key = f"{state_key}_path"
+    inspection_key = f"{state_key}_inspection"
+    name_key = f"{state_key}_name"
+    for key in (signature_key, path_key, inspection_key, name_key):
+        st.session_state.setdefault(key, None)
+
+    use_bundled = False
+    if bundled is not None and bundled.exists():
+        use_bundled = st.checkbox(
+            f"Use the copy supplied with the application — {bundled.name}",
+            value=True,
+            key=f"{state_key}_use_bundled",
+        )
+
+    upload = None
+    if not use_bundled:
+        upload = st.file_uploader(
+            uploader_label, type=file_types, help=help_text, key=f"{state_key}_upload"
+        )
+
+    if use_bundled:
+        stat = bundled.stat()
+        signature = ("bundled", str(bundled), stat.st_size, stat.st_mtime_ns)
+        display_name = bundled.name
+    elif upload is not None:
+        # file_id changes on every upload, so re-uploading a corrected file with
+        # the same name and size is never mistaken for the previous one.
+        signature = ("upload", upload.name, upload.size, getattr(upload, "file_id", None))
+        display_name = upload.name
+    else:
+        signature = None
+        display_name = None
+
+    if signature is None:
+        if st.session_state[signature_key] is not None:
+            for key in (signature_key, path_key, inspection_key, name_key):
+                st.session_state[key] = None
             reset_downstream()
-            cleanup_staged_uploads(keep_run_id=staged.parent.name)
-elif st.session_state.source_signature is not None:
-    for key, value in DEFAULTS.items():
-        st.session_state[key] = value
+        return None, None
 
-inspection = st.session_state.inspection
+    if st.session_state[signature_key] != signature:
+        with st.spinner(f"Reading {display_name}…"):
+            path = bundled if use_bundled else stage(upload.getvalue(), upload.name)
+            st.session_state[path_key] = path
+            st.session_state[name_key] = display_name
+            st.session_state[inspection_key] = inspector(path)
+            st.session_state[signature_key] = signature
+            reset_downstream()
 
-if inspection is None:
-    st.info("Choose a legacy AKS `.xlsb` file to begin.")
-elif not inspection.ok:
-    st.error("**This file cannot be used as a legacy AKS list.**")
+    return st.session_state[path_key], st.session_state[inspection_key]
+
+
+def show_problems(title: str, inspection, hint: str) -> None:
+    st.error(f"**{title}**")
     for problem in inspection.problems:
         st.markdown(f"- {problem}")
-    st.caption(
+    st.caption(hint)
+
+
+# -- Step 1 -----------------------------------------------------------------
+
+st.markdown('<div class="aks-step">Step 1</div>', unsafe_allow_html=True)
+st.subheader("Upload the old AKS file")
+
+source_path, source_inspection = file_step(
+    state_key="source",
+    uploader_label="Legacy AKS workbook (.xlsb)",
+    file_types=["xlsb"],
+    help_text="Your original file is never changed. The app works on its own copy.",
+    inspector=inspect_source_file,
+    stage=stage_source,
+)
+if source_path is not None:
+    cleanup_staged_uploads(keep_run_id=Path(source_path).parent.name)
+
+if source_inspection is None:
+    st.info("Upload the legacy AKS `.xlsb` list you want to migrate.")
+elif not source_inspection.ok:
+    show_problems(
+        "This file cannot be used as a legacy AKS list.",
+        source_inspection,
         "A legacy AKS list is an Excel binary workbook (.xlsb) containing an 'Übersicht' "
-        "worksheet with the equipment table."
+        "worksheet with the equipment table.",
     )
 else:
     with st.container(border=True):
         columns = st.columns([3, 2, 2, 2])
         columns[0].markdown(f"**File**  \n{st.session_state.source_name}")
-        columns[1].markdown(f"**Worksheet**  \n{inspection.sheet}")
-        columns[2].metric("Equipment rows", f"{inspection.data_rows:,}")
+        columns[1].markdown(f"**Worksheet**  \n{source_inspection.sheet}")
+        columns[2].metric("Equipment rows", f"{source_inspection.data_rows:,}")
         columns[3].markdown(
             f"**Validation**  \n{pill('Valid legacy AKS list', 'ok')}", unsafe_allow_html=True
         )
         details = [
-            f"Data read from rows {inspection.first_row}–{inspection.last_row}.",
-            f"Column headings found on row(s) {', '.join(str(row) for row in inspection.header_rows_found)}.",
+            f"Data read from rows {source_inspection.first_row}–{source_inspection.last_row}.",
+            "Column headings found on row(s) "
+            f"{', '.join(str(row) for row in source_inspection.header_rows_found)}.",
         ]
-        details.extend(inspection.notes)
-        st.markdown(
-            "<span class='aks-note'>" + " ".join(details) + "</span>", unsafe_allow_html=True
-        )
+        details.extend(source_inspection.notes)
+        st.markdown("<span class='aks-note'>" + " ".join(details) + "</span>", unsafe_allow_html=True)
 
 
-# ---------------------------------------------------------------------------
-# Step 2 — migration configuration
-# ---------------------------------------------------------------------------
+# -- Step 2 -----------------------------------------------------------------
 
 st.markdown('<div class="aks-step">Step 2</div>', unsafe_allow_html=True)
-st.subheader("Migration configuration")
+st.subheader("Upload the migration mapping")
+st.caption(
+    "The rules that say which legacy column becomes which SAP field, and which old value "
+    "becomes which new one. Normally `MigrationsMapping_00.xlsx`."
+)
 
+mapping_path, mapping_inspection = file_step(
+    state_key="mapping",
+    uploader_label="Migration mapping (.xlsx)",
+    file_types=["xlsx", "xlsm"],
+    help_text="The approved mapping workbook released by the engineering team.",
+    inspector=inspect_mapping_file,
+    stage=stage_configuration_file,
+    bundled=default_mapping(),
+)
 
-def workbook_choices(directory: Path, pattern: str, shipped: Path) -> list[Path]:
-    found = sorted(path for path in directory.glob(pattern) if path.is_file())
-    ordered = [shipped] if shipped.exists() else []
-    ordered.extend(path for path in found if path.resolve() != shipped.resolve())
-    return ordered
-
-
-shipped_mapping = default_mapping()
-shipped_template = default_template()
-
-with st.container(border=True):
-    left, right = st.columns(2)
-    left.markdown(f"**Migration mapping**  \n{version_label(st.session_state.mapping_path or shipped_mapping)}")
-    right.markdown(f"**AKS V2 template**  \n{version_label(st.session_state.template_path or shipped_template)}")
-    if st.session_state.mapping_path or st.session_state.template_path:
-        st.markdown(
-            f"{pill('Custom configuration in use', 'warn')}"
-            "<span class='aks-note'>An advanced setting replaces a file shipped with the app.</span>",
-            unsafe_allow_html=True,
-        )
-    else:
-        st.markdown(
-            f"{pill('Standard configuration', 'ok')}"
-            "<span class='aks-note'>The files shipped with the application are used.</span>",
-            unsafe_allow_html=True,
-        )
-
-with st.expander("Advanced settings — use a different mapping or template"):
-    st.caption(
-        "Only change these when the engineering team has released a new mapping or a new AKS V2 "
-        "template. Everything else in the migration stays the same."
+if mapping_inspection is None:
+    st.info("Upload the migration mapping `.xlsx`.")
+elif not mapping_inspection.ok:
+    show_problems(
+        "This file cannot be used as a migration mapping.",
+        mapping_inspection,
+        "The migration mapping is an .xlsx workbook with a 'Tabelle1' worksheet holding the rules.",
     )
-    advanced_left, advanced_right = st.columns(2)
-
-    with advanced_left:
-        mapping_options = workbook_choices(CONFIG_DIR, "*.xlsx", shipped_mapping)
-        mapping_labels = [f"{path.name} (shipped)" if index == 0 else path.name
-                          for index, path in enumerate(mapping_options)]
-        chosen = st.selectbox(
-            "Migration mapping file",
-            options=list(range(len(mapping_options))),
-            format_func=lambda index: mapping_labels[index],
-        ) if mapping_options else None
-        mapping_upload = st.file_uploader("…or upload another mapping (.xlsx)", type=["xlsx"], key="mapping_upload")
-
-    with advanced_right:
-        template_options = workbook_choices(TEMPLATES_DIR, "*.xlsb", shipped_template)
-        template_labels = [f"{path.name} (shipped)" if index == 0 else path.name
-                           for index, path in enumerate(template_options)]
-        chosen_template = st.selectbox(
-            "AKS V2 template file",
-            options=list(range(len(template_options))),
-            format_func=lambda index: template_labels[index],
-        ) if template_options else None
-        template_upload = st.file_uploader("…or upload another template (.xlsb)", type=["xlsb"], key="template_upload")
-
-    new_mapping = None
-    if mapping_upload is not None:
-        new_mapping = stage_configuration_file(mapping_upload.getvalue(), mapping_upload.name)
-    elif chosen is not None and mapping_options[chosen].resolve() != shipped_mapping.resolve():
-        new_mapping = mapping_options[chosen]
-
-    new_template = None
-    if template_upload is not None:
-        new_template = stage_configuration_file(template_upload.getvalue(), template_upload.name)
-    elif chosen_template is not None and template_options[chosen_template].resolve() != shipped_template.resolve():
-        new_template = template_options[chosen_template]
-
-    if (new_mapping, new_template) != (st.session_state.mapping_path, st.session_state.template_path):
-        st.session_state.mapping_path = new_mapping
-        st.session_state.template_path = new_template
-        reset_downstream()
-        st.rerun()
-
-configuration = describe_configuration(st.session_state.mapping_path, st.session_state.template_path)
-for problem in configuration["mapping_problems"] + configuration["template_problems"]:
-    st.error(problem)
-
-configuration_ok = not (configuration["mapping_problems"] or configuration["template_problems"])
+else:
+    with st.container(border=True):
+        columns = st.columns([3, 2, 2, 2])
+        columns[0].markdown(f"**File**  \n{st.session_state.mapping_name}")
+        columns[1].markdown(f"**Worksheet**  \n{mapping_inspection.sheet}")
+        columns[2].metric("Active rules", f"{mapping_inspection.rule_count:,}")
+        columns[3].markdown(
+            f"**Validation**  \n{pill('Valid migration mapping', 'ok')}", unsafe_allow_html=True
+        )
+        st.markdown(
+            "<span class='aks-note'>" + " ".join(mapping_inspection.notes) + "</span>",
+            unsafe_allow_html=True,
+        )
 
 
-# ---------------------------------------------------------------------------
-# Step 3 — analyse (dry run)
-# ---------------------------------------------------------------------------
+# -- Step 3 -----------------------------------------------------------------
 
 st.markdown('<div class="aks-step">Step 3</div>', unsafe_allow_html=True)
+st.subheader("Upload the AKS V2 template")
+st.caption(
+    "The empty SAP-era workbook your migrated data is written into. Normally `AKS_V2_06.xlsb`. "
+    "This file is only ever read — your copy is never modified."
+)
+
+template_path, template_inspection = file_step(
+    state_key="template",
+    uploader_label="AKS V2 template (.xlsb)",
+    file_types=["xlsb"],
+    help_text="The approved AKS V2 template released by the engineering team.",
+    inspector=inspect_template_file,
+    stage=stage_configuration_file,
+    bundled=default_template(),
+)
+
+if template_inspection is None:
+    st.info("Upload the AKS V2 template `.xlsb`.")
+elif not template_inspection.ok:
+    show_problems(
+        "This file cannot be used as an AKS V2 template.",
+        template_inspection,
+        "The AKS V2 template is an .xlsb workbook containing an 'Übersicht' worksheet and the "
+        "'MIG-Werte Merkmale' value lists.",
+    )
+else:
+    with st.container(border=True):
+        columns = st.columns([3, 2, 2, 2])
+        columns[0].markdown(f"**File**  \n{st.session_state.template_name}")
+        columns[1].markdown(f"**Worksheet**  \n{template_inspection.sheet}")
+        columns[2].metric("SAP fields", f"{template_inspection.field_count:,}")
+        columns[3].markdown(
+            f"**Validation**  \n{pill('Valid AKS V2 template', 'ok')}", unsafe_allow_html=True
+        )
+        if template_inspection.notes:
+            st.markdown(
+                "<span class='aks-note'>" + " ".join(template_inspection.notes) + "</span>",
+                unsafe_allow_html=True,
+            )
+
+inputs_ready = bool(
+    source_inspection and source_inspection.ok
+    and mapping_inspection and mapping_inspection.ok
+    and template_inspection and template_inspection.ok
+)
+
+
+# ---------------------------------------------------------------------------
+# Step 4 — analyse (dry run)
+# ---------------------------------------------------------------------------
+
+st.markdown('<div class="aks-step">Step 4</div>', unsafe_allow_html=True)
 st.subheader("Analyse migration")
 st.caption(
     "A dry run. Every legacy value is compared with the migration mapping and the AKS V2 "
     "value lists. Nothing is written."
 )
 
-ready_to_analyse = bool(inspection and inspection.ok and configuration_ok)
+ready_to_analyse = inputs_ready
 
 if st.button("🔍  Analyse Migration", type="primary", disabled=not ready_to_analyse):
     progress = st.progress(0.0, text="Starting the analysis…")
@@ -441,10 +502,10 @@ elif analysis is not None and analysis.ok:
 
 
 # ---------------------------------------------------------------------------
-# Step 4 — run the migration
+# Step 5 — run the migration
 # ---------------------------------------------------------------------------
 
-st.markdown('<div class="aks-step">Step 4</div>', unsafe_allow_html=True)
+st.markdown('<div class="aks-step">Step 5</div>', unsafe_allow_html=True)
 st.subheader("Run migration")
 
 ready_to_run = bool(analysis is not None and analysis.ok and env_ok)
@@ -512,7 +573,7 @@ result = st.session_state.result
 
 
 # ---------------------------------------------------------------------------
-# Step 5 — results
+# Results
 # ---------------------------------------------------------------------------
 
 if result is not None:

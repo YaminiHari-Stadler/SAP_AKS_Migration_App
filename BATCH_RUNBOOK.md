@@ -26,14 +26,18 @@ and modification dates on screen, and writes them into every migration report.
 
 1. Double-click `Start AKS Migration.bat`.
 2. Check the **system check** in the sidebar: Microsoft Excel must be green.
-3. **Step 1** — choose the legacy `.xlsb` file. Confirm the detected row count
+3. **Step 1** — upload the legacy `.xlsb` file. Confirm the detected row count
    matches what you expect from the legacy `Übersicht` sheet.
-4. **Step 2** — leave the configuration alone unless a new mapping or template
-   has been released. Confirm the displayed versions.
-5. **Step 3 — Analyse Migration.** This is mandatory. Read the summary and work
+4. **Step 2** — upload the approved migration mapping. Confirm the rule count
+   matches the release you intend to use.
+5. **Step 3** — upload the approved AKS V2 template. Confirm the SAP field count.
+6. **Step 4 — Analyse Migration.** This is mandatory. Read the summary and work
    through the review table before writing anything.
-6. **Step 4 — Run Migration.** Download all three result files, or open the run
+7. **Step 5 — Run Migration.** Download all three result files, or open the run
    folder under `outputs\`.
+
+Uploading the mapping and template every time is deliberate: it puts the
+version used on screen, and the migration report records it.
 
 Expected totals for the pilot project (`<project>_AKS_04.xlsb`):
 

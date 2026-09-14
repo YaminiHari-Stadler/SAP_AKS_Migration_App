@@ -33,15 +33,25 @@ file. The sidebar shows a system check that confirms this before you start.
 
 ### Using it
 
-**Step 1 — Select the old AKS file.** Choose the legacy `.xlsb` list. The app
-confirms the worksheet it found and how many equipment rows it detected. If the
-file is not a legacy AKS list, it says so and stops.
+You upload three files, one per step. Each is checked as soon as it arrives, so
+a wrong or damaged file is caught immediately rather than half-way through a
+migration.
 
-**Step 2 — Migration configuration.** Nothing to do normally. The shipped
-mapping and AKS V2 template are used and are named on screen. *Advanced
-settings* lets an authorised user point at a different mapping or template.
+**Step 1 — Upload the old AKS file** (`.xlsb`). Confirms the worksheet and the
+number of equipment rows found.
 
-**Step 3 — Analyse Migration.** A dry run. Nothing is written. You get:
+**Step 2 — Upload the migration mapping** (`.xlsx`). Confirms the rule sheet and
+how many active rules it contains.
+
+**Step 3 — Upload the AKS V2 template** (`.xlsb`). Confirms the SAP field row and
+reports any demonstration rows it carries. Read only — your copy is never
+modified.
+
+If a copy of the mapping or the template happens to sit in `config\` or
+`templates\`, that step offers it with a tick box so you can skip the upload.
+Untick it to upload your own.
+
+**Step 4 — Analyse Migration.** A dry run. Nothing is written. You get:
 
 | Status | Meaning |
 |---|---|
@@ -53,7 +63,7 @@ settings* lets an authorised user point at a different mapping or template.
 Review items are grouped by parameter so you can see the themes, and listed
 individually with the old value, the source cell, and the reason.
 
-**Step 4 — Run Migration.** Creates the migrated workbook. Your original file and
+**Step 5 — Run Migration.** Creates the migrated workbook. Your original file and
 the master template are never modified.
 
 **Results.** Three downloads, also saved under `outputs\`:
@@ -78,7 +88,7 @@ log file from `logs\` to the tool maintainer.
 ## What the migration does
 
 - Reads the legacy `Übersicht` worksheet with `pyxlsb` — Excel is not involved in
-  the analysis, so Step 3 works on any Windows PC.
+  the analysis, so Step 4 works on any Windows PC.
 - Reads the active rules from `MigrationsMapping_00.xlsx` at runtime, so mapping
   changes do not require a code change.
 - Matches each legacy column by its heading. If a heading cannot be matched with
@@ -157,8 +167,9 @@ property rather than code:
 | `AKS_V2_06.xlsb` | `templates\` |
 | Legacy pilot workbooks | `pilot\` (only needed to re-run the regression check) |
 
-The application will not start a migration without the first two. It reports
-exactly which one is missing in Step 2.
+Steps 2 and 3 ask for the first two as uploads, so the application runs from a
+fresh clone without them. Drop them into those folders only if you would rather
+tick "use the copy supplied with the application" than upload each time.
 
 ### The engine is independent of the user interface
 

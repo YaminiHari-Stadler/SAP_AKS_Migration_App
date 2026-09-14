@@ -69,6 +69,29 @@ class SourceInspection:
 
 
 @dataclass
+class MappingInspection:
+    path: Path
+    ok: bool
+    sheet: str | None = None
+    rule_count: int = 0
+    converting_rules: int = 0
+    problems: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+
+
+@dataclass
+class TemplateInspection:
+    path: Path
+    ok: bool
+    sheet: str | None = None
+    available_sheets: list[str] = field(default_factory=list)
+    field_count: int = 0
+    demo_last_row: int | None = None
+    problems: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+
+
+@dataclass
 class OutputVerification:
     ok: bool
     output_path: Path
@@ -255,6 +278,71 @@ def validate_mapping(path: Path) -> list[str]:
     finally:
         workbook.close()
     return []
+
+
+def inspect_mapping(path: Path) -> MappingInspection:
+    """Confirm a file is a usable migration mapping and count its active rules."""
+    path = Path(path)
+    result = MappingInspection(path=path, ok=False)
+    result.problems = validate_mapping(path)
+    if result.problems:
+        return result
+
+    from .mapping import load_rules
+
+    try:
+        rules = load_rules(path)
+    except MigrationError as exc:
+        result.problems.append(str(exc))
+        return result
+    except Exception as exc:  # noqa: BLE001
+        result.problems.append(f"{path.name} could not be read as a migration mapping: {exc}")
+        return result
+
+    result.sheet = MAPPING_SHEET
+    result.rule_count = len(rules)
+    result.converting_rules = sum(1 for rule in rules if rule.replacements)
+    result.notes.append(
+        f"{result.converting_rules} of the {result.rule_count} rules convert values through a "
+        "replacement table; the rest copy the legacy value."
+    )
+    result.ok = True
+    return result
+
+
+def inspect_template(path: Path) -> TemplateInspection:
+    """Confirm a file is a usable AKS V2 template and describe what it contains."""
+    path = Path(path)
+    result = TemplateInspection(path=path, ok=False)
+    result.problems = validate_template(path)
+    if result.problems:
+        return result
+
+    try:
+        result.available_sheets = sheet_names(path)
+        rows = load_sheet(path, TARGET_SHEET)
+    except MigrationError as exc:
+        result.problems.append(str(exc))
+        return result
+
+    result.sheet = TARGET_SHEET
+    result.field_count = len(
+        [value for value in rows.get(TARGET_KEY_ROW, {}).values() if not is_blank(value)]
+    )
+    demo_rows = [
+        row_number
+        for row_number, values in rows.items()
+        if row_number >= TARGET_DATA_START_ROW
+        and any(not is_blank(values.get(column)) for column in POPULATED_TARGET_COLUMNS)
+    ]
+    if demo_rows:
+        result.demo_last_row = max(demo_rows)
+        result.notes.append(
+            f"The template carries demonstration rows down to row {result.demo_last_row}. "
+            "They are removed from your copy; this file is never changed."
+        )
+    result.ok = True
+    return result
 
 
 def verify_output(
